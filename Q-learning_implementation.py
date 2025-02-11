@@ -1,21 +1,5 @@
 """
 ===========================================
-Q-learning update rule:
-Q(s_t, a_t) = Q(s_t, a_t) + alpha * (r_t+1 + gamma * max_a Q(s_t+1, a) - Q(s_t, a_t))
-
-Where:
-- Q(s_t, a_t): Q-value for state s_t and action a_t
-- alpha: Learning rate (0 < alpha <= 1)
-- r_t+1: Reward received after taking action a_t in state s_t
-- gamma: Discount factor (0 <= gamma <= 1)
-- max_a Q(s_t+1, a): Maximum Q-value for the next state s_t+1
-===========================================
-"""
-
-
-
-"""
-===========================================
 Imports
 ===========================================
 """
@@ -44,8 +28,10 @@ GAMMA = 0.95 # same as DISCOUNT RATE - should be close to, but not equal to one.
 # makes it short-sighted, ignoring long-term rewards and converging to suboptimal policies. Depends on your environment 
 # for which side you lean to. Good way is to use exponential decay function, but a linear decrease of a certain vlue is common.
 
-env = gym.make('FrozenLake-v1', desc=None, map_name="4x4", is_slippery=False, render_mode="human")
+# Instantiate gymnasium environment.
+env = gym.make('FrozenLake-v1', desc=None, map_name="4x4", is_slippery=False, render_mode="ram")
 
+# Instantiate Q-table.
 state_size = env.observation_space.n #In a 4x4 grid, each position (or cell) in the grid is a state. Since there are 4 rows 
 # and 4 columns, the total number of states is: 4 * 4, So, there are 16 states in a 4x4 grid.
 action_size = env.action_space.n # (actions are 0-3: left, down, right, up ∴ size is 4)
@@ -89,6 +75,21 @@ def epsilon_greedy_action_selection(epsilon, q_table, discrete_state):
     return action
     
 def compute_next_q_value(old_q_value, reward, next_optimal_q_value):
+    """
+    ===========================================
+    Q-learning update rule:
+    Q(s_t, a_t) = Q(s_t, a_t) + alpha * (r_t+1 + gamma * max_a Q(s_t+1, a) - Q(s_t, a_t))
+
+    Where:
+    - Q(s_t, a_t): Q-value for state s_t and action a_t
+    - alpha: Learning rate (0 < alpha <= 1)
+    - r_t+1: Reward received after taking action a_t in state s_t
+    - gamma: Discount factor (0 <= gamma <= 1)
+    - max_a Q(s_t+1, a): Maximum Q-value for the next state s_t+1
+    ===========================================
+    
+    Q-value is the likeliness of getting to the reward by using this action.
+    """
     return old_q_value + ALPHA * (reward + GAMMA * next_optimal_q_value - old_q_value)
     
 def reduce_epsilon(epsilon, epoch):
@@ -161,23 +162,24 @@ def main():
     '''
 
     # training_loop
-    log_interval = 200
+    log_interval = 20
 
     for episode in range(EPOCHS):
 
         global epsilon 
-        state = env.reset()
-        print(state)
-        done = False
+        state, state_info = env.reset() # returns tuple[ObsType, dict[str, Any]] meaning 
+        # [Observation (state), info {keyword, data}] - prob means probability
+        terminated = truncated = False
         total_rewards = 0
 
-        while not done:
-            # ACTION
-            action = epsilon_greedy_action_selection(epsilon, q_table, state)
-
-            # state, reward... env.step
+        while not terminated | truncated:
+            # ACTION - generate a new action
+            action = epsilon_greedy_action_selection(epsilon, q_table, state) # will it be a random action 
+            # or prioritize what it knows is a better choice
+            
+            # state, reward... env.step - implement action and see what happens
             new_state, reward, terminated, truncated, info = env.step(action) # new_state is same as observation
-            print(new_state, reward, terminated, truncated, info, done)
+            print(new_state, reward, terminated, truncated, info, epsilon)
 
             # OLD (current) Q-value table Q(s_t, a_t)
             old_q_value = q_table[state, action]
@@ -194,7 +196,7 @@ def main():
             # track rewards
             total_rewards = total_rewards + reward
 
-            # new state is now the state
+            # new state is now the current state
             state = new_state
 
         # Agent finished a round of the game
@@ -203,7 +205,7 @@ def main():
         rewards.append(total_rewards)
 
         if episode % log_interval == 0:
-            print.np.sum[rewards]
+            print(np.sum(rewards))
 
     env.close()
 
