@@ -7,6 +7,7 @@ import gymnasium as gym
 import ale_py
 import numpy as np
 import matplotlib.pyplot as plt
+import matplotlib
 import time
 from IPython.display import clear_output
 
@@ -19,7 +20,7 @@ from gymnasium.envs.registration import register
 Global Constants and Configurations
 ===========================================
 """
-EPOCHS = 20000 # same as EPISODES - how many times the agent plays the game.
+EPOCHS = 2000 # same as EPISODES - how many times the agent plays the game.
 ALPHA = 0.8 # same as LEARNING RATE - should be close to, but not equal to 1. Set too low and will take too long to learn, 
 # set too high and it may never converge bacause it causes unstable, overly reactive Q-values, preventing convergence due 
 # to excessive fluctuations and loss of long-term trends (it overwrites useful data that has already been learned).
@@ -29,7 +30,7 @@ GAMMA = 0.95 # same as DISCOUNT RATE - should be close to, but not equal to one.
 # for which side you lean to. Good way is to use exponential decay function, but a linear decrease of a certain vlue is common.
 
 # Instantiate gymnasium environment.
-env = gym.make('FrozenLake-v1', desc=None, map_name="4x4", is_slippery=False, render_mode="ram")
+env = gym.make('FrozenLake-v1', desc=None, map_name="4x4", is_slippery=False, render_mode="ansi")
 
 # Instantiate Q-table.
 state_size = env.observation_space.n #In a 4x4 grid, each position (or cell) in the grid is a state. Since there are 4 rows 
@@ -50,8 +51,14 @@ decay_rate = 0.001
 
 rewards = []
 
+print(matplotlib.get_backend())
+fig = plt.figure()
+ax = fig.add_subplot(111)
 plt.ion()  # Enable interactive plot mode
-
+plt.show(block=False)
+fig.canvas.draw()
+epoch_plot_tracker = []
+total_reward_plot_tracker = []
 
 
 """
@@ -162,7 +169,7 @@ def main():
     '''
 
     # training_loop
-    log_interval = 20
+    log_interval = 200
 
     for episode in range(EPOCHS):
 
@@ -204,8 +211,35 @@ def main():
         epsilon = reduce_epsilon(epsilon, episode)
         rewards.append(total_rewards)
 
+        total_reward_plot_tracker.append(np.sum(rewards))
+        epoch_plot_tracker.append(episode)
+
         if episode % log_interval == 0:
             print(np.sum(rewards))
+            ax.clear()
+            ax.plot(epoch_plot_tracker, total_reward_plot_tracker)
+            fig.canvas.draw()
+            plt.pause(0.1)  # Give time for the UI to update
+            time.sleep(1)
+
+        # if completed episodes, show found winning strategy
+        if episode == EPOCHS:
+            env.reset()
+
+            for steps in range(50):
+                # env.render()
+                print("Rendered", env.render())
+                action = np.argmax(q_table[state,:])
+                state, reward, terminated, truncated, info = env.step(action)
+
+                plt.pause(0.1)  # Give time for the UI to update
+                time.sleep(1)
+                clear_output(wait=True)
+
+                if terminated:
+                    print("Rendered", env.render())
+                    print("ALL DONE!")
+                    break
 
     env.close()
 
