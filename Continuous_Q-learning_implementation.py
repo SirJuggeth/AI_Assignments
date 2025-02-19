@@ -66,13 +66,15 @@ __version__ = "1.0.0"  # Version tracking
 # Imports
 # =============================================================================
 
+import pdb
+import sys
 import time
+import warnings
 from typing import Any, Literal, SupportsFloat
 
 import gymnasium as gym
 import matplotlib.pyplot as plt
 import numpy as np
-from click import FLOAT
 from gymnasium import Env
 from matplotlib.axes import Axes
 from numpy.typing import NDArray
@@ -81,7 +83,7 @@ from pyglet.window import key
 # =============================================================================
 # Global Constants and Configurations
 # =============================================================================
-EPOCHS = 2000  # Same as EPISODES - how many times the agent plays the game.
+EPOCHS = 20000  # Same as EPISODES - how many times the agent plays the game.
 
 ALPHA = 0.8  # Same as LEARNING RATE - should be close to, but not equal to 1.
 # Set too low, and learning takes too long. Set too high, and it may never
@@ -94,23 +96,24 @@ GAMMA = 0.95  # Same as DISCOUNT RATE - should be close to, but not equal to 1.
 # short-sighted, ignoring long-term rewards and converging to suboptimal
 # policies. The best choice depends on the environment. Using an exponential
 # decay function is a good approach, but a linear decrease is also common.
-epsilon = 1
 
 BURN_IN = 1  # When you start to reduce epsiolon.
-EPSILON_END = 10000
+EPSILON_END = 15000  # Epoch when to stop reducing epsilon
 EPSILON_REDUCE = 0.0001
 
-env: Env[Any, Any] = gym.make("CartPole-v1")
-env.reset()
-env = gym.wrappers.TimeLimit(env, max_episode_steps=200)
-
-NPFloatArray = NDArray[np.float64]  # Type alias for clarity
-
 # Elcploration vs. Exploitation param
-epsilon = 1.0  # Exploration rate
 max_epsilon = 1.0  # Exploration prob at start
 min_epsilon = 0.01  # Min exploration prob
 decay_rate = 0.001  # Exponential decay for exploration
+
+# Convert warnings to exceptions
+# warnings.simplefilter("error", Warning) # converts warnings into errors.
+
+env: Env[Any, Any] = gym.make("CartPole-v1", render_mode="rgb_array")
+env.reset()
+env = gym.wrappers.TimeLimit(env, max_episode_steps=500)
+
+NPFloatArray = NDArray[np.float64]  # Type alias for clarity
 
 
 # =============================================================================
@@ -126,7 +129,7 @@ def key_press(k) -> None:
     Returns:
         action
     """
-    action: int = None
+    action = None
 
     if k == key.LEFT:
         action = 0
@@ -136,32 +139,40 @@ def key_press(k) -> None:
     return action
 
 
-def create_bins(num_bins_per_obs: int = 10) -> NDArray[NPFloatArray]:
+def create_bins(num_bins_per_obs) -> NDArray[NPFloatArray]:
     """
-    This function divides a span into discrete, equally sized portions.
+    This function creeates empty bins that divide a span into discrete, equally
+    sized portions. There will be bins for cart position, cart velocity,
+    pole angle and pole angular velocity.
 
     Args:
-        num_bins_per_obs
+        num_bins_per_obs: int
 
     Returns:
-        bins_cart_position: NDArray[np.float64]
+        bins: NDArray[np.float64]
     """
-    # print(create_bins())
+    # We've chosen 10 bins per span, but you can choose more or less. Choosing
+    # less would cause the model to predict less meaningful information, but
+    # there comes a point where having more bins does not provide any benefit.
 
     bins_cart_position: NPFloatArray = np.linspace(
         -4.8, 4.8, num_bins_per_obs
     )  # dividing x-axis
 
     bins_cart_vel: NPFloatArray = np.linspace(
-        5, 5, num_bins_per_obs
+        -5, 5, num_bins_per_obs
     )  # cart velocity is measured in m/s?
+    # -inf, inf are the possible extremes, but that doesn't make sense in
+    # this scenario. You can play to see what makes sense, but we will
+    # assume -5, 5 is reasonable.
 
     bins_pole_angle: NPFloatArray = np.linspace(
         -0.418, 0.418, num_bins_per_obs
-    )  # pole angle is measured in radians
+    )  # pole angle is measured in radians, but couldbe done in degreed also
+    # -24 deg to 24 deg
 
     bins_pole_angular_vel: NPFloatArray = np.linspace(
-        5, 5, num_bins_per_obs
+        -5, 5, num_bins_per_obs
     )  # pole angular velocity is measured in m/s?
 
     bins: NDArray[NPFloatArray] = np.array(
@@ -172,7 +183,7 @@ def create_bins(num_bins_per_obs: int = 10) -> NDArray[NPFloatArray]:
             bins_pole_angular_vel,
         ]
     )
-    print(bins)
+    # print(bins)
     return bins
 
 
@@ -197,18 +208,22 @@ def discretize_observation(observations, bins) -> None:
     """
     binned_observations: list = []
 
+    if type(observations) is tuple and len(observations) > 1:
+        observations = observations[0]
+
     for i, obs in enumerate(observations):  #  if it didn't have i as part
         # of the statement it wouldn't have needed the enumeration.
 
-        import pdb  # for troubleshooting
+        # import pdb  # for troubleshooting
 
-        pdb.set_trace()
+        # pdb.set_trace()
 
         # find which bin obs fits into and puts it there.
         discretized_obs = np.digitize(obs, bins[i])
         binned_observations.append(discretized_obs)
 
-    return tuple(binned_observations)  # Important for later indexing
+    return tuple(binned_observations)  # Important for later indexing when
+    # creating the Q_table
 
 
 def epsilon_greedy_action_selction(epsilon, q_table, discrete_state) -> int:
@@ -225,57 +240,57 @@ def epsilon_greedy_action_selction(epsilon, q_table, discrete_state) -> int:
     Returns:
         None: Description of return value.
     """
-    rand_num: float = np.random.random()
+    rand_num = np.random.random()
 
     # EXPLOITATION, USE BEST Q(s, a) value
     if rand_num > epsilon:
-        action: np.float64 = np.argmax((q_table[discrete_state]))
+        action = np.argmax(q_table[discrete_state])
 
     # EXPLORATION, USE A RANDOM ACTION
     else:
         # Return a random action 0, 1, 2, 3
-        action: Any = np.random.randint(0, env.action_space.n)
+        action = np.random.randint(0, env.action_space.n)
 
     return action
 
 
-def compute_next_x_al(old_q_val, reward, next_optimaal_q_val) -> None:
+def compute_next_q_val(current_q_val, reward, next_optimal_q_val, i):
     """
     Short desc of func.
 
     More detailed desc of func
 
     Args:
-        param1: (int): Description.
-        param2: (str): Description.
-
-    Returns:
-        None: Description of return value.
-    """
-    pass  # Placeholder for future code
-
-    return None
-
-
-def compute_next_q_val(
-    old_q_val: int, reward: int, next_optimal_q_val: int
-) -> None:
-    """
-    Short desc of func.
-
-    More detailed desc of func
-
-    Args:
-        old_q_val, reward, next_optimal_q_val: (int): Description.
+        current_q_val, reward, next_optimal_q_val: (int): Description.
         reward: (str): Description.
 
     Returns:
         None: Description of return value.
     """
-    return old_q_val + ALPHA * (reward + GAMMA * next_optimal_q_val)
+    """
+    try:
+        print("next Q epoch: ", i)
+        q = current_q_val + ALPHA * (
+            reward + GAMMA * next_optimal_q_val - current_q_val
+        )
+
+    except Warning as e:
+        # Log or print variables if you want a quick inspection before pausing
+        print(f"Overflow encountered at iteration {i} because of {e}")
+        print(
+            f"current_q_val: {current_q_val}, reward: {reward}, next_optimal_q_val: {next_optimal_q_val}"
+        )
+
+        # Pause the program here without breaking the loop
+        pdb.set_trace()
+"""
+
+    return current_q_val + ALPHA * (
+        reward + GAMMA * next_optimal_q_val - current_q_val
+    )
 
 
-def reduce_epsilon(epsilon: int, epoch: int) -> int:
+def reduce_epsilon(epsilon, epoch):
     """
     Linear reduction of epsilon, with a burn in and hard stop point.
 
@@ -289,16 +304,19 @@ def reduce_epsilon(epsilon: int, epoch: int) -> int:
         int: Description of return value.
     """
     if BURN_IN <= epoch <= EPSILON_END:
-        epsilon -= EPSILON_REDUCE
+        epsilon -= EPSILON_REDUCE  # Linear reduction of epsilon until number of
+        # epochs reaches EPSILON_END. BURN_IN is when exploitation begins.
+        # It could be set to start at a later epoch.
 
     return epsilon
 
 
-def fail(terminated: int, truncated: int, points: int, reward: int) -> int:
+def fail(terminated, truncated, points, reward) -> int:
     """
-    Short desc of func.
+    Punishes agent for not getting enough points during an epoch.
 
-    More detailed desc of func
+    You have the ability to give rewards or punishment based on certain param,
+    like angular velocity.
 
     Args:
         terminated: (int): Description.
@@ -308,9 +326,19 @@ def fail(terminated: int, truncated: int, points: int, reward: int) -> int:
         int: Description of return value.
     """
     if (terminated | truncated) and points < 150:
+        print("FAILLED")
         reward = -200
 
     return reward
+
+
+def crash_handler(type, value, traceback):
+    print("\n🔥 Crash detected! Entering post-mortem debugging...")
+    pdb.post_mortem(traceback)  # Drop into debugger
+
+
+# Set post-mortem debugging as the default handler
+sys.excepthook = crash_handler
 
 
 # =============================================================================
@@ -320,17 +348,35 @@ def main() -> None:
     """
     Main script execution
     """
-    observations = env.reset()
-    rewards = 0
-    num_bins = 10
-    bins: NDArray[NDArray[np.float64]] = create_bins(num_bins)
+    file = open("Q-tables.txt", "a")
 
-    mapped_observation: tuple = discretize_observation(observations, bins)
-    # print(mapped_observation)
+    observations = env.reset()
+    print("1st obs: ", observations)
+
+    # rewards = 0
+    points = 0
+    num_bins = 10
+    bins = create_bins(num_bins)
+
+    points_log: list = []
+    mean_points_log: list = []
+    epochs: list = []
+
+    epsilon = 1.0  # Exploration rate
+
+    mapped_observation = discretize_observation(observations, bins)
+    print("mapped obs:", mapped_observation)
     # starting position is (5, 5, 5, 5)
 
     q_table_shape = (num_bins, num_bins, num_bins, num_bins, env.action_space.n)
-    q_table = np.zeroes(q_table_shape)
+    q_table = np.zeros(q_table_shape)
+    # print("Q-table: ", q_table)
+
+    # How often do we update the plot? (Just for performance reasons)
+    log_interval = 500
+
+    render_interval = 200  # How often to render the game during training
+    # (If you want to watch your model learning, see the game being played)
 
     # Innitial trial code
     # for _ in range(1000):
@@ -347,51 +393,43 @@ def main() -> None:
     ##############################################
     ### VISUALIZATION OF TRAINING PROGRESS ######
     #############################################
-    log_interval = (
-        500  # How often do we update the plot? (Just for performance reasons)
-    )
-    render_interval = 2000  # How often to render the game during training
-    # (If you want to watch your model learning)
     ### Here we set up the routine for the live plotting of the achieved points
     fig = plt.figure()
     ax: Axes = fig.add_subplot(111)
     plt.ion()
+    plt.show()
     fig.canvas.draw()
     ##############################################
     #############################################
 
-    points_log: list = []
-    mean_points_log: list = []
-    epochs: list = []
-
     for epoch in range(EPOCHS):
         ## continuous state --> Discrete state
 
-        initial_state: tuple[Any, dict[str, Any]] = (
-            env.reset()
-        )  # get the initial observation
-        discretized_state: tuple = discretize_observation(
+        initial_state = env.reset()
+        # get the initial observation
+
+        discretized_state = discretize_observation(
             initial_state, bins
         )  # map the observation to the bins
 
-        terminated = truncated = (
-            False  # to stop current run when cartpole falls down
-        )
-        points = 0
+        terminated = truncated = False
+        # to stop current run when cartpole falls down
+        points = 0  # reset points counter
 
         # Track epochs for Plotting Visualization
         epochs.append(epoch)
 
-        while (
-            not terminated | truncated
-        ):  # Perform current run as long as done is False (as long as the cartpole is up)
+        # Play the game
+        while not terminated | truncated:
+            # Perform current run as long as done is False
+            # (as long as the cartpole is up)
             # View how the cartpole is doing every render interval
-            #         if epoch % render_interval == 0:
-            #             env.render()
+            # if epoch % render_interval == 0:
+            #     env.render()
 
-            action: int | Any = epsilon_greedy_action_selction(
+            action = epsilon_greedy_action_selction(
                 epsilon, q_table, discretized_state
-            )  # Epsilon-Greedy Action Selection
+            )
 
             next_state, reward, terminated, truncated, info = env.step(action)
 
@@ -399,44 +437,63 @@ def main() -> None:
 
             next_state_discretized = discretize_observation(next_state, bins)
 
-            old_q_val = q_table[discretized_state + (acttion,)]
+            current_q_val = q_table[discretized_state + (action,)]
             next_optimal_q_val = np.max(q_table[next_state_discretized])
 
-            next_q = compute_next_q_val(old_q_val, reward, next_optimal_q_val)
+            next_q = compute_next_q_val(
+                current_q_val, reward, next_optimal_q_val, epoch
+            )
             q_table[discretized_state + (action,)] = next_q
 
             discretized_state = next_state_discretized
-            point += 1
+            points += 1  # +1 point for each action taken
 
-        espsilon = reduce_epsilon(epsilon, epoch)
+        epsilon = reduce_epsilon(epsilon, epoch)
 
-        points_log.np.append(points)
+        print("points: ", points)
+        points_log.append(points)
+        # Calculate mean of last 30 games, rounded to 2 decimal points
+        # for the purpose of visualization
         running_mean = round(np.mean(points_log[-30:]), 2)
-        mean_points_log, append(running_mean)
+        mean_points_log.append(running_mean)
 
         ################ Plot the points and running mean ##################
         if epoch % log_interval == 0:
+            print("log interval, epoch: ", epoch)
             ax.clear()
             ax.scatter(epochs, points_log)
             ax.plot(epochs, points_log)
             ax.plot(
                 epochs, mean_points_log, label=f"Running Mean: {running_mean}"
             )
-            plt.legend()
-            flg.canvas.draw()
+            # plt.pause(0.01)  # Give time for the UI to update
+            # time.sleep(1)
+            # plt.legend()
+            fig.canvas.draw()
+
+            # ####log q_table for troublehooting
+            # # Convert the updated Q-table to a string, maintaining its structure
+            # q_table_string = np.array2string(
+            #     q_table, separator=",", threshold=np.inf
+            # )
+            # # Write the Q-table snapshot to the file with newline separation
+            # file.write(
+            #     q_table_string + "\n\n"
+            # )  # Double newline for clearer separation
         ######################################################################
-        env.close()
+    env.close()
+    file.close()
 
-        # action
-        #     # perform action and get next state
+    # action
+    #     # perform action and get next state
 
-        # reward: SupportsFloat | Literal[-200] = fail(
-        #     terminated, truncated, points, reward
-        # )  # Check if reward or fail state
+    # reward: SupportsFloat | Literal[-200] = fail(
+    #     terminated, truncated, points, reward
+    # )  # Check if reward or fail state
 
-        # next_state_discretized = discretize_observation(
-        #     next_state, bins
-        # )  # map the next observation to the bins
+    # next_state_discretized = discretize_observation(
+    #     next_state, bins
+    # )  # map the next observation to the bins
 
     return None
 
