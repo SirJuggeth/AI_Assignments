@@ -34,7 +34,7 @@ Description:
 
 
     ===========================================
-    Q-learning update rule:
+    Q-learning update rule (Bellman equation):
     Q(s_t, a_t) = Q(s_t, a_t) + alpha * (
     r_t+1 + gamma * max_a Q(s_t+1, a) - Q(s_t, a_t)
     )
@@ -226,7 +226,7 @@ def discretize_observation(observations, bins) -> None:
     # creating the Q_table
 
 
-def epsilon_greedy_action_selction(epsilon, q_table, discrete_state) -> int:
+def epsilon_greedy_action_selction(epsilon, q_table, discrete_state, weights) -> int:
     """
     Returns an action for the agent. Note how it uses a random number to decide on
     exploration versus explotation trade-off.
@@ -240,6 +240,7 @@ def epsilon_greedy_action_selction(epsilon, q_table, discrete_state) -> int:
     Returns:
         None: Description of return value.
     """
+
     rand_num = np.random.random()
 
     # EXPLOITATION, USE BEST Q(s, a) value
@@ -290,7 +291,22 @@ def compute_next_q_val(current_q_val, reward, next_optimal_q_val, i):
     )
 
 
-def reduce_epsilon(epsilon, epoch):
+def determine_weights(discretized_state):
+    cart_pos = discretized_state[1]  # Alias, for clarity
+    cart_vel = discretized_state[0]  # Alias, for clarity
+    pole_pos = discretized_state[2]  # Alias, for clarity
+    pole_ang_vel = discretized_state[3]  # Alias, for clarity
+
+    if pole_pos and pole_ang_vel < 0:
+        weights = [0.0, 0.25]
+
+    if pole_pos and pole_ang_vel > 0:
+        weights = [0.25, 0.0]
+
+    return weights
+
+
+def reduce_epsilon(epsilon, epoch, weights):
     """
     Linear reduction of epsilon, with a burn in and hard stop point.
 
@@ -364,10 +380,6 @@ def main() -> None:
 
     epsilon = 1.0  # Exploration rate
 
-    mapped_observation = discretize_observation(observations, bins)
-    print("mapped obs:", mapped_observation)
-    # starting position is (5, 5, 5, 5)
-
     q_table_shape = (num_bins, num_bins, num_bins, num_bins, env.action_space.n)
     q_table = np.zeros(q_table_shape)
     # print("Q-table: ", q_table)
@@ -377,18 +389,6 @@ def main() -> None:
 
     render_interval = 200  # How often to render the game during training
     # (If you want to watch your model learning, see the game being played)
-
-    # Innitial trial code
-    # for _ in range(1000):
-    #     env.render()
-    #     # get the reward and the done flag
-    #     obs, reward, terminated, truncated, info = env.step(action)
-    #     rewards += 1
-    #     if terminated | truncated:
-    #         print(f"you got {rewards} points!")
-    #         break
-    #     time.sleep(0.5)
-    # env.close()
 
     ##############################################
     ### VISUALIZATION OF TRAINING PROGRESS ######
@@ -405,15 +405,17 @@ def main() -> None:
     for epoch in range(EPOCHS):
         ## continuous state --> Discrete state
 
-        initial_state = env.reset()
         # get the initial observation
+        initial_state = env.reset()
 
-        discretized_state = discretize_observation(
-            initial_state, bins
-        )  # map the observation to the bins
+        # map the observation to the bins
+        discretized_state = discretize_observation(initial_state, bins)
 
+        determine_weights(discretized_state)
+
+        # initialize var that will stop current run when cartpole falls down
         terminated = truncated = False
-        # to stop current run when cartpole falls down
+
         points = 0  # reset points counter
 
         # Track epochs for Plotting Visualization
@@ -421,14 +423,11 @@ def main() -> None:
 
         # Play the game
         while not terminated | truncated:
-            # Perform current run as long as done is False
+            # Perform current run as long as terminated | truncated is False
             # (as long as the cartpole is up)
-            # View how the cartpole is doing every render interval
-            # if epoch % render_interval == 0:
-            #     env.render()
 
             action = epsilon_greedy_action_selction(
-                epsilon, q_table, discretized_state
+                epsilon, q_table, discrete_state I need to figure out descrete vs discretized
             )
 
             next_state, reward, terminated, truncated, info = env.step(action)
@@ -448,7 +447,7 @@ def main() -> None:
             discretized_state = next_state_discretized
             points += 1  # +1 point for each action taken
 
-        epsilon = reduce_epsilon(epsilon, epoch)
+        epsilon = reduce_epsilon(epsilon, epoch, discretized_state)
 
         print("points: ", points)
         points_log.append(points)
