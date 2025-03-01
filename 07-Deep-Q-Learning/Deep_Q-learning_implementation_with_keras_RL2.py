@@ -1,5 +1,4 @@
 import time
-from turtle import window_width
 
 import gymnasium as gym
 from rl.agents.dqn import DQNAgent
