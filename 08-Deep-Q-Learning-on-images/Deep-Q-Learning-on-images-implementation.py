@@ -21,14 +21,6 @@ from tensorflow.keras.layers import (
 from tensorflow.keras.models import Sequential
 from tensorflow.keras.optimizers import Adam
 
-WINDOW_LENGTH = 4
-# *More complex games will use a larger window length (in frames)
-IMG_SIZE = (84, 84)
-
-
-CHECKPOINT_FILENAME = "DQN_checkpoints_Breakout.h5f"  # Unfinished weights.
-WEIGHTS_FILENAME = "DQN_weights_Breakout.h5f"  # Fully trained weights.
-
 RENDER_MODES = [
     None,
     "human",
@@ -37,21 +29,32 @@ RENDER_MODES = [
     "rgb_array_list",
     "human_pixels",
 ]
-
 ENV_NAME = "ALE/Breakout-v5"
 
-env = gym.make(
-    ENV_NAME,
-    render_mode=RENDER_MODES[2],
-    repeat_action_probability=0.0,
-    frameskip=WINDOW_LENGTH,
-)
-# *Frame skipping is used to speed up the training process by skipping a fixed
-# number of frames (game steps) between each decision made by the agent.
-
-NB_ACTIONS = env.action_space.n
-# NB_OBS = len()
+nb_actions = None
+nb_obs = None
 NB_STEPS = 1000000
+
+WINDOW_LENGTH = 4
+# *More complex games will use a larger window length (in frames)
+IMG_SIZE = (84, 84)
+
+CHECKPOINT_FILENAME = "DQN_checkpoints_Breakout.h5f"  # Unfinished weights.
+WEIGHTS_FILENAME = "DQN_weights_Breakout.h5f"  # Fully trained weights.
+
+
+class GymWrapper(gym.Wrapper):
+    def __init__(self, env):
+        gym.Wrapper.__init__(self, env)
+        self.env = env
+
+    def reset(self, **kwargs):
+        obs, _ = self.env.reset(**kwargs)
+        return obs
+
+    def step(self, action):
+        obs, reward, done, info, _ = self.env.step(action)
+        return obs, reward, done, {}
 
 
 class BreakOutProcessor(Processor):
@@ -209,7 +212,7 @@ def create_model() -> Sequential:
     model.add(Activation("relu"))
 
     # Output layer action ---> Q_(s,a) Q-values for each action of a given state.
-    model.add(Dense(NB_ACTIONS))
+    model.add(Dense(nb_actions))
     model.add(Activation("linear"))
 
     print(model.summary())
@@ -238,7 +241,7 @@ def set_agent_policy(model) -> DQNAgent:
     # size of updates during training, preventing instability from large error jumps.
     dqn = DQNAgent(
         model=model,
-        nb_actions=NB_ACTIONS,
+        nb_actions=nb_actions,
         policy=policy,
         memory=mem,
         processor=processor,
@@ -269,7 +272,7 @@ def show_model_performance(env, model, weights, epsilon):
 
     dqn = DQNAgent(
         model=model,
-        nb_actions=NB_ACTIONS,
+        nb_actions=nb_actions,
         policy=policy,
         memory=mem,
         processor=processor,
@@ -283,6 +286,21 @@ def show_model_performance(env, model, weights, epsilon):
 
 
 def main():
+    global nb_actions
+
+    env = GymWrapper(
+        gym.make(
+            ENV_NAME,
+            render_mode=RENDER_MODES[2],
+            repeat_action_probability=0.0,
+            frameskip=WINDOW_LENGTH,
+        )
+    )
+    # *Frame skipping is used to speed up the training process by skipping a fixed
+    # number of frames (game steps) between each decision made by the agent.
+
+    nb_actions = env.action_space.n
+
     np.random.seed(42)
     env.reset()
 
@@ -296,7 +314,7 @@ def main():
 
     # LOAD WEIGHTS
     # If you want to load weights from previous training session:
-    # *Be sure to adjust NB_STEPS and policy's max epsilon accordingly.
+    # *Be sure to adjust nb_steps and policy's max epsilon accordingly.
     # *Epsilon is adjusted because you want it to be more focused on going with
     # what it knows, rather than taking random actions to try something new.
     # model.load_weights("dqn_BreakoutDeterministic-v4_weights_1200000.h5f")
